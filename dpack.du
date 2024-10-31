@@ -45,7 +45,7 @@ def getConfirm(message, defaultValue = false) {
 }
 
 def executeCommand(command, cwd) {
-  if(System.platform == "window") {
+  if(System.platform == "windows") {
     const execCommand = "cd {} && {}".format(cwd, command);
     return Process.run(["cmd.exe", "/C", execCommand], true).match(
       def (result) => [true, result],
