@@ -1,0 +1,272 @@
+import Process;
+import Path;
+from Argparse import Parser;
+import System;
+import JSON;
+import Env;
+import UUID;
+
+def getHome() {
+  if(System.platform == "windows")
+    return Env.get("APPDATA");
+  return Env.get("HOME");
+}
+
+def rmdirr(path) {
+  const list = Path.listDir(path);
+  list.forEach(def (entry) => {
+      const child = Path.join(path, entry);
+      if(Path.isDir(child)) {
+        rmdirr(child);
+      } else {
+        System.remove(child);
+      }
+  });
+  System.rmdir(path);
+}
+
+def exitError(message) {
+  printError(message);
+  System.exit(1);
+}
+
+def getConfirm(message, defaultValue = false) {
+  const opts = defaultValue ? "[Y/n]" : "[y/N]";
+  while {
+    const response = input("{} {}:".format(message, opts)).lower();
+    if(response.len() == 0) {
+      return defaultValue;
+    }
+    if(response == "y")
+      return true;
+    if(response == "n")
+      return false;
+  }
+}
+
+def executeCommand(command, cwd) {
+  if(System.platform == "window") {
+    const execCommand = "cd {} && {}".format(cwd, command);
+    return Process.run(["cmd.exe", "/C", execCommand], true).match(
+      def (result) => [true, result],
+      def (error) => [false, error]
+    );
+  }
+  const execCommand = "cd {} && {}".format(cwd, command);
+  return Process.run(["/bin/sh", "-c", execCommand], true).match(
+    def (result) => [true, result],
+    def (error) => [false, error]
+  );
+}
+
+def createDirChecked(path) {
+  if(Path.exists(path))
+    return false;
+  const res = System.mkdirAll(path);
+  if(not res.success())
+    exitError("Failed to create: {} {}".format(path, res.unwrapError()));
+ return true;
+}
+
+def readDpack(path = nil) {
+  if(not Path.exists(path == nil ? "dpack.json" : path)) {
+    exitError("dpack.json does not exist, please create one using dpack init: {}".format(path == nil ? "dpack.json" : path));
+  }
+  with(path == nil ? "dpack.json" : path, "r") {
+    return JSON.parse(file.read()).match(def (res) => res, def (error) => exitError("Could not parse dpack.json file: {}".format(error)));
+  }
+}
+def writeDpack(path, d) {
+  with(path == nil ? "dpack.json" : path, "w") {
+      file.write(JSON.stringify(d, 2).unwrap());
+  }
+}
+
+def cloneDep(url) {
+  print("Resolving: {}".format(url));
+  const uuid = UUID.generateRandom().unwrap();
+  var dir = Path.join("deps");
+  createDirChecked(dir);
+  const execResult = executeCommand("git clone {} {}".format(url, uuid), dir);
+  if(not execResult[0]) {
+    exitError("Failed to resolve git url: {}".format(url));
+  }
+  return Path.join(dir, uuid);
+}
+
+def setupDep(url, dir, opts = {}) {
+  print("fetching {}".format(url));
+  if(opts == nil)
+    return;
+  if(opts.exists("update") and opts["update"]) {
+     const res = executeCommand("git fetch", dir);
+     if(not res[0])
+       exitError(res[1]);
+  }
+  if(opts.exists("commit")) {
+   const res = executeCommand("git reset --hard {}".format(opts["commit"]), dir);
+     if(not res[0])
+       exitError(res[1]);
+  } else if (opts.exists("branch")) {
+    const res = executeCommand("git reset --hard origin/{}".format(opts["branch"]), dir);
+    if(not res[0])
+      exitError(res[1]);
+  } else {
+    const res = executeCommand("git reset --hard && git pull", dir);
+    if(not res[0])
+      exitError(res[1]);
+
+  }
+}
+
+
+const argv = System.argv;
+
+const allowScripts = argv.findIndex(def(item) => (item.lower() == "--allow-scripts" or item.lower() == "-a")) != nil;
+
+def doInstall(url, setupOpts) {
+  const dir = cloneDep(url);
+  if (not Path.exists(Path.join(dir, "dpack.json"))) {
+    rmdirr(dir);
+    exitError("Cloned url: {} does not contain a dpack.json".format(url));
+  }
+  const packageInfo = readDpack(Path.join(dir, "dpack.json"));
+  setupDep(url, dir, setupOpts);
+  const depPath = Path.join("deps", packageInfo["name"]);
+  if(Path.exists(depPath)) {
+     if(not getConfirm("{} exists, but is needed for the dependency, delete it?".format(depPath), false)) {
+        exitError("Error dep directory is not empty: {}".format(depPath));
+      }
+      rmdirr(depPath);
+  }
+  const mvRes = executeCommand("{} {} {}".format(System.platform == "windows" ? "move" : "mv ", dir, depPath), ".");
+  if(not mvRes[0]) {
+    rmdirr(dir);
+    exitError("Failed to move directory {} => {}".format(dir, depPath));
+  }
+  if(packageInfo.exists("build-cmd")) {
+    if(allowScripts or getConfirm("{}({}) has a build-cmd script, run it?".format(packageInfo["name"], url), true)) {
+      print("Running build-cmd {} '{}'".format(url, packageInfo["build-cmd"]));
+      const res = executeCommand(packageInfo["build-cmd"], depPath);
+      if(not res[0]) {
+        rmdirr(depPath);
+        exitError("{}({}) build-cmd failed: {}".format(packageInfo["name"], url, res[1]));
+      }
+    }
+  }
+  const entry = {"name": packageInfo["name"], "url": url, "version": packageInfo["version"]};
+  setupOpts.forEach(def(k,v) => {
+    entry[k] = v;
+  });
+  return entry;
+}
+def doSync(entry) {
+  const dir = Path.join("deps", entry["name"]);
+  const setupOpts = {};
+  if(entry.exists("branch"))
+    setupOpts["branch"] = entry["branch"];
+  if(entry.exists("commit"))
+    setupOpts["commit"] = entry["commit"];
+  if (not Path.exists(dir)) {
+    return doInstall(entry["url"], setupOpts);
+  }
+  if (not Path.exists(Path.join(dir, "dpack.json"))) {
+    rmdirr(dir);
+    return doInstall(entry["url"], setupOpts);
+  }
+  setupOpts["update"] = true;
+  setupDep(entry["url"], dir, setupOpts);
+  const packageInfo = readDpack(Path.join(dir, "dpack.json"));
+  if(packageInfo.exists("build-cmd")) {
+    if(allowScripts or getConfirm("{}({}) has a build-cmd script, run it?".format(packageInfo["name"], url), true)) {
+      print("Running build-cmd {} '{}'".format(entry["url"], packageInfo["build-cmd"]));
+      const res = executeCommand(packageInfo["build-cmd"], dir);
+      if(not res[0]) {
+        rmdirr(dir);
+        exitError("{}({}) build-cmd failed: {}".format(packageInfo["name"], url, res[1]));
+      }
+    }
+  }
+  setupOpts.remove("update");
+  const n = {"name": entry["name"], "url": entry["url"], "version": packageInfo["version"]};
+  setupOpts.forEach(def(k,v) => {
+    n[k] = v;
+  });
+  return n;
+}
+
+if(argv.len() < 2) {
+  exitError("first argument needs to be one of: [sync,install,remove,init]");
+}
+const start = System.time();
+const action = argv[1].lower();
+
+if(action == "sync") {
+  print("Sync...");
+  const pack = readDpack();
+  if(not pack.exists("deps"))
+    pack["deps"] = {};
+  pack["deps"].keys().forEach(def(k) => {
+    const res = doSync(pack["deps"][k]);
+    pack["deps"][res["name"]] = res;
+    if (res["name"] != k)
+      pack["deps"].remove(k);
+  });
+
+  writeDpack(nil, pack);
+} else if (action == "install") {
+  if(argv.len() < 3)
+    exitError("Need a url to clone");
+
+  const url = argv[argv.len()-1].lower();
+  print("Install: {}...".format(url));
+  const branchIndex = argv.findIndex(def(item) => (item.lower() == "--branch" or item.lower() == "-b"));
+  const commitIndex = argv.findIndex(def(item) => (item.lower() == "--commit" or item.lower() == "-"));
+
+  const setupOpts = {};
+  if(branchIndex)
+    setupOpts["branch"] = argv[branchIndex+1];
+  if(commitIndex)
+    setupOpts["commit"] = argv[commitIndex+1];
+
+  const pack = readDpack();
+
+  if(not pack.exists("deps"))
+    pack["deps"] = {};
+  pack["deps"].forEach(def (k,v) => {
+     if(v["url"].lower() == url)
+      exitError("URL {} already present, consider syncing".format(url));
+  });
+  const e = doInstall(url, setupOpts);
+  pack["deps"][e["name"]] = e;
+  writeDpack(nil, pack);
+} else if (action == "remove") {
+  const pack = readDpack();
+  const target = argv[argv.len()-1].lower();
+  print("Remove: {}...".format(target));
+  if(not pack.exists("deps"))
+    pack["deps"] = {};
+  pack["deps"].keys().forEach(def(k) => {
+    const entry = pack["deps"][k];
+    if (target == k.lower() or entry["url"].lower() == target) {
+      rmdirr(Path.join("deps", entry["name"]));
+      pack["deps"].remove(k);
+    }
+  });
+  writeDpack(nil, pack);
+} else if (action == "init") {
+  print("Init...");
+  if(Path.exists("dpack.json") and not getConfirm("dpack.json exists, overwrite")) {
+  } else {
+    const name = input("Name: ");
+    var entry = {"name": name, "version": "0.0.1", "deps": {}};
+    with("dpack.json", "w") {
+      file.write(JSON.stringify(entry, 2).unwrap());
+    }
+    print("created dpack.json for {}".format(name));
+  }
+} else {
+  exitError("Unknown action: {}".format(action));
+}
+const elapsed = System.time() - start;
+print("Finished in {}{}".format(elapsed, "s"));
