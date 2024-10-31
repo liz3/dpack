@@ -82,14 +82,13 @@ def writeDpack(path, d) {
   }
 }
 
-def cloneDep(url) {
+def cloneDep(url, dir = "deps") {
   print("Resolving: {}".format(url));
   const uuid = UUID.generateRandom().unwrap();
-  var dir = Path.join("deps");
   createDirChecked(dir);
   const execResult = executeCommand("git clone {} {}".format(url, uuid), dir);
   if(not execResult[0]) {
-    exitError("Failed to resolve git url: {}".format(url));
+    exitError("Failed to resolve git url: {} for {}/{}".format(url, dir, uuid));
   }
   return Path.join(dir, uuid);
 }
@@ -124,8 +123,15 @@ const argv = System.argv;
 
 const allowScripts = argv.findIndex(def(item) => (item.lower() == "--allow-scripts" or item.lower() == "-a")) != nil;
 
+def wrapClone(url, opts) {
+  if (opts != nil and opts.exists("dir")) {
+    return cloneDep(url, opts["dir"]);
+  }
+  return cloneDep(url);
+}
+
 def doInstall(url, setupOpts) {
-  const dir = cloneDep(url);
+  const dir = wrapClone(url, setupOpts);
   if (not Path.exists(Path.join(dir, "dpack.json"))) {
     rmdirr(dir);
     exitError("Cloned url: {} does not contain a dpack.json".format(url));
@@ -139,7 +145,7 @@ def doInstall(url, setupOpts) {
       }
       rmdirr(depPath);
   }
-  const mvRes = executeCommand("{} {} {}".format(System.platform == "windows" ? "move" : "mv ", dir, depPath), ".");
+  const mvRes = executeCommand("{} {} {}".format(System.platform == "windows" ? "move" : "mv", dir, depPath), ".");
   if(not mvRes[0]) {
     rmdirr(dir);
     exitError("Failed to move directory {} => {}".format(dir, depPath));
@@ -160,13 +166,16 @@ def doInstall(url, setupOpts) {
   });
   return entry;
 }
-def doSync(entry) {
-  const dir = Path.join("deps", entry["name"]);
+def doSync(entry, basePath = "deps") {
+  const dir = Path.join(basePath, entry["name"]);
   const setupOpts = {};
   if(entry.exists("branch"))
     setupOpts["branch"] = entry["branch"];
   if(entry.exists("commit"))
     setupOpts["commit"] = entry["commit"];
+  if(basePath != "deps") {
+    setupOpts["dir"] = basePath;
+  }
   if (not Path.exists(dir)) {
     return doInstall(entry["url"], setupOpts);
   }
@@ -178,7 +187,7 @@ def doSync(entry) {
   setupDep(entry["url"], dir, setupOpts);
   const packageInfo = readDpack(Path.join(dir, "dpack.json"));
   if(packageInfo.exists("build-cmd")) {
-    if(allowScripts or getConfirm("{}({}) has a build-cmd script, run it?".format(packageInfo["name"], url), true)) {
+    if(allowScripts or getConfirm("{}({}) has a build-cmd script, run it?".format(packageInfo["name"], entry["url"]), true)) {
       print("Running build-cmd {} '{}'".format(entry["url"], packageInfo["build-cmd"]));
       const res = executeCommand(packageInfo["build-cmd"], dir);
       if(not res[0]) {
@@ -193,6 +202,17 @@ def doSync(entry) {
     n[k] = v;
   });
   return n;
+}
+
+def recursePackage(entry, baseDir) {
+  if(entry.exists("deps")) {
+    entry["deps"].forEach(def (k,v) => {
+      if(v["url"].lower() != entry["url"].lower()) {
+        doSync(v, Path.join(baseDir, entry["name"], "deps"));
+        recursePackage(v, Path.join(baseDir, entry["name"], "deps"));
+     }
+   });
+  }
 }
 
 if(argv.len() < 2) {
@@ -211,6 +231,7 @@ if(action == "sync") {
     pack["deps"][res["name"]] = res;
     if (res["name"] != k)
       pack["deps"].remove(k);
+   recursePackage(res, "deps");
   });
 
   writeDpack(nil, pack);
@@ -238,6 +259,7 @@ if(action == "sync") {
       exitError("URL {} already present, consider syncing".format(url));
   });
   const e = doInstall(url, setupOpts);
+  recursePackage(e, "deps");
   pack["deps"][e["name"]] = e;
   writeDpack(nil, pack);
 } else if (action == "remove") {
