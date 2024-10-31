@@ -62,7 +62,7 @@ def executeCommand(command, cwd) {
 def createDirChecked(path) {
   if(Path.exists(path))
     return false;
-  const res = System.mkdirAll(path);
+  const res = System.mkdir(path);
   if(not res.success())
     exitError("Failed to create: {} {}".format(path, res.unwrapError()));
  return true;
@@ -103,10 +103,12 @@ def setupDep(url, dir, opts = {}) {
        exitError(res[1]);
   }
   if(opts.exists("commit")) {
+   print("Checking out {}:{}".format(url, opts["commit"]));
    const res = executeCommand("git reset --hard {}".format(opts["commit"]), dir);
      if(not res[0])
        exitError(res[1]);
   } else if (opts.exists("branch")) {
+    print("Checking out {}:{}".format(url, opts["branch"]));
     const res = executeCommand("git reset --hard origin/{}".format(opts["branch"]), dir);
     if(not res[0])
       exitError(res[1]);
@@ -138,7 +140,7 @@ def doInstall(url, setupOpts) {
   }
   const packageInfo = readDpack(Path.join(dir, "dpack.json"));
   setupDep(url, dir, setupOpts);
-  const depPath = Path.join("deps", packageInfo["name"]);
+  const depPath = Path.join(setupOpts != nil and setupOpts.exists("dir") ? setupOpts["dir"] : "deps", packageInfo["name"]);
   if(Path.exists(depPath)) {
      if(not getConfirm("{} exists, but is needed for the dependency, delete it?".format(depPath), false)) {
         exitError("Error dep directory is not empty: {}".format(depPath));
@@ -197,6 +199,8 @@ def doSync(entry, basePath = "deps") {
     }
   }
   setupOpts.remove("update");
+  if(setupOpts.exists("dir"))
+    setupOpts.remove("dir");
   const n = {"name": entry["name"], "url": entry["url"], "version": packageInfo["version"]};
   setupOpts.forEach(def(k,v) => {
     n[k] = v;
@@ -205,8 +209,9 @@ def doSync(entry, basePath = "deps") {
 }
 
 def recursePackage(entry, baseDir) {
-  if(entry.exists("deps")) {
-    entry["deps"].forEach(def (k,v) => {
+  const content = readDpack(Path.join(baseDir, entry["name"], "dpack.json"));
+  if(content.exists("deps")) {
+    content["deps"].forEach(def (k,v) => {
       if(v["url"].lower() != entry["url"].lower()) {
         doSync(v, Path.join(baseDir, entry["name"], "deps"));
         recursePackage(v, Path.join(baseDir, entry["name"], "deps"));
