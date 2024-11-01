@@ -243,30 +243,35 @@ if(action == "sync") {
 } else if (action == "install") {
   if(argv.len() < 3)
     exitError("Need a url to clone");
-
-  const url = argv[argv.len()-1].lower();
-  print("Install: {}...".format(url));
-  const branchIndex = argv.findIndex(def(item) => (item.lower() == "--branch" or item.lower() == "-b"));
-  const commitIndex = argv.findIndex(def(item) => (item.lower() == "--commit" or item.lower() == "-"));
-
-  const setupOpts = {};
-  if(branchIndex)
-    setupOpts["branch"] = argv[branchIndex+1];
-  if(commitIndex)
-    setupOpts["commit"] = argv[commitIndex+1];
-
+  const urls = argv[2:].filter(def(entry) => not entry.startsWith("-"));
+  if(urls.len() == 0) {
+    exitError("No packages to install");
+  }
   const pack = readDpack();
+  urls.forEach(def(url) => {
+    print("Install: {}...".format(url));
+    const branchIndex = argv.findIndex(def(item) => (item.lower() == "--branch" or item.lower() == "-b"));
+    const commitIndex = argv.findIndex(def(item) => (item.lower() == "--commit" or item.lower() == "-"));
 
-  if(not pack.exists("deps"))
+    const setupOpts = {};
+    if(branchIndex)
+      setupOpts["branch"] = argv[branchIndex+1];
+    if(commitIndex)
+      setupOpts["commit"] = argv[commitIndex+1];
+
+    if(not pack.exists("deps"))
     pack["deps"] = {};
-  pack["deps"].forEach(def (k,v) => {
-     if(v["url"].lower() == url)
+    pack["deps"].forEach(def (k,v) => {
+      if(v["url"].lower() == url)
       exitError("URL {} already present, consider syncing".format(url));
+    });
+    const e = doInstall(url, setupOpts);
+    recursePackage(e, "deps");
+    pack["deps"][e["name"]] = e;
+
   });
-  const e = doInstall(url, setupOpts);
-  recursePackage(e, "deps");
-  pack["deps"][e["name"]] = e;
   writeDpack(nil, pack);
+
 } else if (action == "remove") {
   const pack = readDpack();
   const target = argv[argv.len()-1].lower();
@@ -285,12 +290,28 @@ if(action == "sync") {
   print("Init...");
   if(Path.exists("dpack.json") and not getConfirm("dpack.json exists, overwrite")) {
   } else {
-    const name = input("Name: ");
-    var entry = {"name": name, "version": "0.0.1", "deps": {}};
+    const useDefaults = argv.findIndex(def(item) => (item.lower() == "--defaults" or item.lower() == "-d"));
+    const cwd = System.getCWD().unwrap();
+    const defaultName = Path.basename(cwd);
+    const entry = {"name": defaultName, "author": Env.get("USER"), "version": "0.0.1", "deps": {}};
+    if (not useDefaults) {
+      var name = input("Name({}): ".format(defaultName));
+      entry["name"] = name.len() ? name : defaultName;
+      var author = input("Author({}): ".format(Env.get("USER")));
+      if(author.len())
+        entry["author"] = author;
+      const buildCmd = input("build-cmd(default non): ");
+      if(buildCmd.len())
+        entry["build-cmd"] = buildCmd;
+      const license = input("License(default non): ");
+      if(license.len())
+        entry["license"] = license;
+    }
+
     with("dpack.json", "w") {
       file.write(JSON.stringify(entry, 2).unwrap());
     }
-    print("created dpack.json for {}".format(name));
+    print("created dpack.json for {}".format(entry["name"]));
   }
 } else {
   exitError("Unknown action: {}".format(action));
