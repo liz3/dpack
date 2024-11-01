@@ -116,13 +116,10 @@ def setupDep(url, dir, opts = {}) {
     const res = executeCommand("git reset --hard && git pull", dir);
     if(not res[0])
       exitError(res[1]);
-
   }
 }
 
-
 const argv = System.argv;
-
 const allowScripts = argv.findIndex(def(item) => (item.lower() == "--allow-scripts" or item.lower() == "-a")) != nil;
 
 def wrapClone(url, opts) {
@@ -168,6 +165,7 @@ def doInstall(url, setupOpts) {
   });
   return entry;
 }
+
 def doSync(entry, basePath = "deps") {
   const dir = Path.join(basePath, entry["name"]);
   const setupOpts = {};
@@ -223,6 +221,7 @@ def recursePackage(entry, baseDir) {
 if(argv.len() < 2) {
   exitError("first argument needs to be one of: [sync,install,remove,init]");
 }
+
 const start = System.time();
 const action = argv[1].lower();
 
