@@ -82,7 +82,7 @@ def writeDpack(path, d) {
   }
 }
 
-def cloneDep(url, dir = "deps") {
+def cloneDep(url, dir = "dictu_modules") {
   print("Resolving: {}".format(url));
   const uuid = UUID.generateRandom().unwrap();
   createDirChecked(dir);
@@ -137,7 +137,7 @@ def doInstall(url, setupOpts) {
   }
   const packageInfo = readDpack(Path.join(dir, "dpack.json"));
   setupDep(url, dir, setupOpts);
-  const depPath = Path.join(setupOpts != nil and setupOpts.exists("dir") ? setupOpts["dir"] : "deps", packageInfo["name"]);
+  const depPath = Path.join(setupOpts != nil and setupOpts.exists("dir") ? setupOpts["dir"] : "dictu_modules", packageInfo["name"]);
   if(Path.exists(depPath)) {
      if(not getConfirm("{} exists, but is needed for the dependency, delete it?".format(depPath), false)) {
         exitError("Error dep directory is not empty: {}".format(depPath));
@@ -166,14 +166,14 @@ def doInstall(url, setupOpts) {
   return entry;
 }
 
-def doSync(entry, basePath = "deps") {
+def doSync(entry, basePath = "dictu_modules") {
   const dir = Path.join(basePath, entry["name"]);
   const setupOpts = {};
   if(entry.exists("branch"))
     setupOpts["branch"] = entry["branch"];
   if(entry.exists("commit"))
     setupOpts["commit"] = entry["commit"];
-  if(basePath != "deps") {
+  if(basePath != "dictu_modules") {
     setupOpts["dir"] = basePath;
   }
   if (not Path.exists(dir)) {
@@ -211,8 +211,8 @@ def recursePackage(entry, baseDir) {
   if(content.exists("deps")) {
     content["deps"].forEach(def (k,v) => {
       if(v["url"].lower() != entry["url"].lower()) {
-        doSync(v, Path.join(baseDir, entry["name"], "deps"));
-        recursePackage(v, Path.join(baseDir, entry["name"], "deps"));
+        doSync(v, Path.join(baseDir, entry["name"], "dictu_modules"));
+        recursePackage(v, Path.join(baseDir, entry["name"], "dictu_modules"));
      }
    });
   }
@@ -235,14 +235,14 @@ if(action == "sync") {
     pack["deps"][res["name"]] = res;
     if (res["name"] != k)
       pack["deps"].remove(k);
-   recursePackage(res, "deps");
+   recursePackage(res, "dictu_modules");
   });
 
   writeDpack(nil, pack);
 } else if (action == "install") {
   if(argv.len() < 3)
     exitError("Need a url to clone");
-  const urls = argv[2:].filter(def(entry) => not entry.startsWith("-"));
+  const urls = argv[2:].filter(def(entry) => entry.startsWith("http://") or entry.startsWith("https://"));
   if(urls.len() == 0) {
     exitError("No packages to install");
   }
@@ -259,13 +259,13 @@ if(action == "sync") {
       setupOpts["commit"] = argv[commitIndex+1];
 
     if(not pack.exists("deps"))
-    pack["deps"] = {};
+      pack["deps"] = {};
     pack["deps"].forEach(def (k,v) => {
       if(v["url"].lower() == url)
       exitError("URL {} already present, consider syncing".format(url));
     });
     const e = doInstall(url, setupOpts);
-    recursePackage(e, "deps");
+    recursePackage(e, "dictu_modules");
     pack["deps"][e["name"]] = e;
 
   });
@@ -280,7 +280,7 @@ if(action == "sync") {
   pack["deps"].keys().forEach(def(k) => {
     const entry = pack["deps"][k];
     if (target == k.lower() or entry["url"].lower() == target) {
-      rmdirr(Path.join("deps", entry["name"]));
+      rmdirr(Path.join("dictu_modules", entry["name"]));
       pack["deps"].remove(k);
     }
   });
