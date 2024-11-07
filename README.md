@@ -39,7 +39,7 @@ After pushing that file the repository is ready for usage!
 For a few examples you can use packages i did: https://github.com/liz3/dictu-ui.git, https://github.com/liz3/dictu-pq.git
 
 ## importing packages
-The `dictu_modules` folder is special as the Dictu VM will use it to search for files so you can omit the `dictu_modules` part of the import path.
+The `dictu_modules` folder is special as the Dictu VM will use it to search for files so you can omit the `dictu_modules` part of the import path.  
 Example from [dictu-mongo](https://github.com/liz3/dictu-mongo):
 ```
 from "dictu-mongo/mod.du" import MongoDriver;
